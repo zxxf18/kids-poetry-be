@@ -42,7 +42,7 @@ func (s *MySQL) Close() error                   { return s.db.Close() }
 func (s *MySQL) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
 
 func (s *MySQL) List(ctx context.Context, q Query) ([]model.PoemListItem, int, error) {
-	from, where, args := buildScope(q)
+	from, where, scopeArgs := buildScope(q)
 	var total int
 	if isUnfiltered(q) {
 		var err error
@@ -54,21 +54,30 @@ func (s *MySQL) List(ctx context.Context, q Query) ([]model.PoemListItem, int, e
 		if err := s.db.QueryRowContext(ctx, query, countArgs...).Scan(&total); err != nil {
 			return nil, 0, err
 		}
-	} else if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) "+from+" "+where, args...).Scan(&total); err != nil {
+	} else if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) "+from+" "+where, scopeArgs...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	order := "p.popular_score DESC, p.id ASC"
+	rankSelect := "p.id,p.popular_score"
+	innerOrder := "p.popular_score DESC,p.id ASC"
+	outerOrder := "ranked.popular_score DESC,ranked.id ASC"
+	queryArgs := append([]any(nil), scopeArgs...)
 	if useFullText(q.Q) {
 		v := "%" + escapeLike(q.Q) + "%"
-		order = "(p.author=?) DESC,(p.title=?) DESC,(p.title LIKE ? ESCAPE '\\\\') DESC,p.popular_score DESC,MATCH(p.title,p.author,p.content_text,p.translation) AGAINST (? IN BOOLEAN MODE) DESC,p.id ASC"
-		args = append(args, q.Q, q.Q, v, fullTextPhrase(q.Q))
+		rankSelect += `,(p.author=?) AS author_exact,(p.title=?) AS title_exact,
+			(p.title LIKE ? ESCAPE '\\') AS title_contains,
+			MATCH(p.title,p.author,p.content_text,p.translation) AGAINST (? IN BOOLEAN MODE) AS relevance`
+		innerOrder = "author_exact DESC,title_exact DESC,title_contains DESC,p.popular_score DESC,relevance DESC,p.id ASC"
+		outerOrder = "ranked.author_exact DESC,ranked.title_exact DESC,ranked.title_contains DESC,ranked.popular_score DESC,ranked.relevance DESC,ranked.id ASC"
+		rankArgs := []any{q.Q, q.Q, v, fullTextPhrase(q.Q)}
+		queryArgs = append(rankArgs, scopeArgs...)
 	}
 	query := `SELECT p.id,p.title,p.author,p.dynasty,p.kind,p.form,p.cipai,
 		COALESCE(JSON_UNQUOTE(JSON_EXTRACT(p.lines_json,'$[0]')),''),p.themes_json,p.collections_json,
 		p.age_min,p.age_max,(JSON_LENGTH(p.pinyin_json)>0),(CHAR_LENGTH(p.translation)>0),(JSON_LENGTH(p.annotations_json)>0),p.popular_score
-		` + from + " " + where + " ORDER BY " + order + " LIMIT ? OFFSET ?"
-	args = append(args, q.PageSize, (q.Page-1)*q.PageSize)
-	rows, err := s.db.QueryContext(ctx, query, args...)
+		FROM (` + "SELECT " + rankSelect + " " + from + " " + where + " ORDER BY " + innerOrder + ` LIMIT ? OFFSET ?
+		) ranked JOIN poems p ON p.id=ranked.id ORDER BY ` + outerOrder
+	queryArgs = append(queryArgs, q.PageSize, (q.Page-1)*q.PageSize)
+	rows, err := s.db.QueryContext(ctx, query, queryArgs...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -109,27 +118,28 @@ func buildScope(q Query) (string, string, []any) {
 func buildWhere(q Query) (string, []any) {
 	clauses := []string{"1=1"}
 	args := make([]any, 0, 16)
-	like := func(column, value string) {
-		if value != "" {
-			clauses = append(clauses, column+" LIKE ? ESCAPE '\\\\'")
-			args = append(args, "%"+escapeLike(value)+"%")
-		}
-	}
 	if q.Q != "" {
 		if useFullText(q.Q) {
 			clauses = append(clauses, "MATCH(p.title,p.author,p.content_text,p.translation) AGAINST (? IN BOOLEAN MODE)")
 			args = append(args, fullTextPhrase(q.Q))
 		} else {
-			v := "%" + escapeLike(q.Q) + "%"
-			clauses = append(clauses, "(p.title LIKE ? ESCAPE '\\\\' OR p.author LIKE ? ESCAPE '\\\\' OR p.content_text LIKE ? ESCAPE '\\\\' OR p.translation LIKE ? ESCAPE '\\\\')")
-			args = append(args, v, v, v, v)
+			clauses = append(clauses, "(p.title LIKE ? ESCAPE '\\\\' OR p.author=?)")
+			args = append(args, escapeLike(q.Q)+"%", q.Q)
 		}
 	}
 	if q.Author != "" {
 		clauses = append(clauses, "p.author=?")
 		args = append(args, q.Author)
 	}
-	like("p.title", q.Title)
+	if q.Title != "" {
+		if useFullText(q.Title) {
+			clauses = append(clauses, "MATCH(p.title,p.author,p.content_text,p.translation) AGAINST (? IN BOOLEAN MODE) AND p.title LIKE ? ESCAPE '\\\\'")
+			args = append(args, fullTextPhrase(q.Title), "%"+escapeLike(q.Title)+"%")
+		} else {
+			clauses = append(clauses, "p.title LIKE ? ESCAPE '\\\\'")
+			args = append(args, escapeLike(q.Title)+"%")
+		}
+	}
 	for column, value := range map[string]string{"p.dynasty": q.Dynasty, "p.kind": q.Kind, "p.form": q.Form, "p.cipai": q.Cipai} {
 		if value != "" {
 			clauses = append(clauses, column+"=?")

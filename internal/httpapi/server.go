@@ -1,12 +1,16 @@
 package httpapi
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"math/rand/v2"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/rest"
@@ -17,10 +21,20 @@ import (
 type API struct {
 	store          *store.MySQL
 	datasetVersion string
+	facetsMu       sync.RWMutex
+	facetsCache    map[string][]store.FacetValue
 }
 
 func New(s *store.MySQL, datasetVersion string) *API {
-	return &API{store: s, datasetVersion: datasetVersion}
+	a := &API{store: s, datasetVersion: datasetVersion}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		if _, err := a.loadFacets(ctx); err != nil {
+			logx.Errorf("prewarm poetry facets: %v", err)
+		}
+	}()
+	return a
 }
 
 func (a *API) Register(server *rest.Server) {
@@ -50,12 +64,26 @@ func (a *API) meta(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"count": count, "datasetVersion": a.datasetVersion})
 }
 func (a *API) facets(w http.ResponseWriter, r *http.Request) {
-	result, err := a.store.Facets(r.Context())
+	result, err := a.loadFacets(r.Context())
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (a *API) loadFacets(ctx context.Context) (map[string][]store.FacetValue, error) {
+	a.facetsMu.Lock()
+	defer a.facetsMu.Unlock()
+	if a.facetsCache != nil {
+		return a.facetsCache, nil
+	}
+	result, err := a.store.Facets(ctx)
+	if err != nil {
+		return nil, err
+	}
+	a.facetsCache = result
+	return result, nil
 }
 
 func (a *API) listPoems(w http.ResponseWriter, r *http.Request) {
@@ -73,11 +101,19 @@ func (a *API) featured(w http.ResponseWriter, r *http.Request) {
 	if collection == "" {
 		collection = "widely-known"
 	}
+	random := r.URL.Query().Get("random") == "true"
 	limit := parseInt(r.URL.Query().Get("limit"), 12, 1, 50)
+	if random {
+		limit = 50
+	}
 	items, total, err := a.store.List(r.Context(), store.Query{Collection: collection, Page: 1, PageSize: limit})
 	if err != nil {
 		writeStoreError(w, err)
 		return
+	}
+	if random && len(items) > 0 {
+		items = items[rand.IntN(len(items)):]
+		items = items[:1]
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": total, "collection": collection})
 }

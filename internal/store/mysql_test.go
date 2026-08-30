@@ -1,6 +1,9 @@
 package store
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestEscapeLike(t *testing.T) {
 	got := escapeLike(`月%_\\`)
@@ -47,5 +50,16 @@ func TestTagOnlyCountQuery(t *testing.T) {
 	}
 	if _, _, ok = tagOnlyCountQuery(Query{Theme: "山水", Dynasty: "唐"}); ok {
 		t.Fatal("poem fields require the joined count query")
+	}
+}
+
+func TestBuildWhereUsesIndexedSearchPaths(t *testing.T) {
+	where, args := buildWhere(Query{Q: "春"})
+	if strings.Contains(where, "content_text LIKE") || len(args) != 2 || args[0] != "春%" || args[1] != "春" {
+		t.Fatalf("single-character search must use title prefix and exact author: where=%q args=%v", where, args)
+	}
+	where, args = buildWhere(Query{Title: "春晓"})
+	if !strings.Contains(where, "MATCH(") || !strings.Contains(where, "p.title LIKE") || len(args) != 2 {
+		t.Fatalf("multi-character title search must narrow through full text: where=%q args=%v", where, args)
 	}
 }
