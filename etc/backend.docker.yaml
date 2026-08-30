@@ -1,0 +1,9 @@
+Name: kids-poetry-api
+Host: 0.0.0.0
+Port: 8890
+Timeout: 10000
+Database:
+  DSN: ${POETRY_DB_DSN}
+App:
+  DatasetVersion: ${POETRY_DATASET_VERSION}
+

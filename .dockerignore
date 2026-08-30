@@ -1,0 +1,14 @@
+.git
+.gitignore
+.env
+data
+dist
+!dist/
+!dist/linux-amd64/
+!dist/linux-amd64/kids-poetry-api
+!dist/linux-amd64/kids-poetry-importer
+!dist/linux-amd64/kids-poetry-minio-sync
+*.tar
+*.tar.gz
+README.md
+docs

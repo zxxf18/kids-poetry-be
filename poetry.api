@@ -1,0 +1,19 @@
+syntax = "v1"
+
+info(
+  title: "Kids Poetry API"
+  desc: "儿童古诗词浏览、筛选与阅读接口"
+  version: "v1"
+)
+
+type HealthResponse {
+  Status string `json:"status"`
+  DatasetVersion string `json:"datasetVersion"`
+}
+
+@server(prefix: /api/v1)
+service poetry-api {
+  @handler health
+  get /healthz returns (HealthResponse)
+}
+

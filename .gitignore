@@ -1,0 +1,8 @@
+.DS_Store
+.env
+etc/*.local.yaml
+data/
+dist/
+*.tar
+*.tar.gz
+
