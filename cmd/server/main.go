@@ -10,6 +10,7 @@ import (
 	"github.com/zeromicro/go-zero/core/conf"
 	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/rest"
+	"github.com/zxxf18/kids-poetry-be/internal/audiostore"
 	"github.com/zxxf18/kids-poetry-be/internal/config"
 	"github.com/zxxf18/kids-poetry-be/internal/httpapi"
 	"github.com/zxxf18/kids-poetry-be/internal/store"
@@ -42,9 +43,13 @@ func main() {
 		panic(err)
 	}
 	defer s.Close()
+	audio, err := audiostore.New(c)
+	if err != nil {
+		panic(err)
+	}
 	server := rest.MustNewServer(c.RestConf)
 	defer server.Stop()
-	httpapi.New(s, c.App.DatasetVersion).Register(server)
+	httpapi.New(s, audio, c.App.DatasetVersion).Register(server)
 	logx.Infof("kids poetry API listening on %s:%d", c.Host, c.Port)
 	server.Start()
 	fmt.Println("stopped")

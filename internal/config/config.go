@@ -7,6 +7,13 @@ type Config struct {
 	Database struct {
 		DSN string
 	}
+	Audio struct {
+		Endpoint  string
+		AccessKey string
+		SecretKey string
+		Bucket    string
+		UseSSL    bool
+	}
 	App struct {
 		DatasetVersion string
 	}

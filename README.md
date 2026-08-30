@@ -1,12 +1,13 @@
 # kids-poetry-be
 
-“童诗小书房”后端，基于 Go 1.25、go-zero REST 和 MySQL。它只保存应用代码、数据结构和整理工具；诗词源文件与生成后的数据包不会进入本仓库。
+“诗里山河”后端，基于 Go 1.25、go-zero REST、MySQL 和 MinIO。它只保存应用代码、数据结构和整理工具；诗词源文件、生成后的数据包与朗读音频不会进入本仓库。
 
 ## 能力
 
 - 按关键词、朝代、作者、题目、内容类型、体裁、题材、词牌和精选集检索
-- “流传最广”“小学精选”“经典选本”等独立推荐集合
+- “流传最广”“小学精选”“初中诗词”“高中诗词”“经典选本”等独立推荐集合
 - 返回正文、行级拼音、注释、白话译文、赏析和字段级来源
+- 详情标记朗读可用性，并通过同源、支持 Range 请求的接口流式读取私有 MinIO 音频
 - gzip JSONL 百条批量幂等导入，记录数据集版本、对象路径、条数和 SHA-256
 - MySQL ngram 中文全文索引：两字以上按短语检索，单字走题目前缀/诗人精确索引；列表先排 ID 再回表，避免读取无关大字段
 - 题材与精选集使用标签索引计数，聚合维度进程内预热缓存；单字题目/作者前缀使用覆盖索引合并；`featured?random=true` 可从精选名篇中随机取一首
@@ -31,6 +32,8 @@ POETRY_DATASET_VERSION='2026-08-30.v1' \
   go run ./cmd/server -f etc/backend.example.yaml
 ```
 
+朗读为可选能力；启用时额外设置 `POETRY_AUDIO_MINIO_ENDPOINT`、`POETRY_AUDIO_MINIO_ACCESS_KEY`、`POETRY_AUDIO_MINIO_SECRET_KEY` 和 `POETRY_AUDIO_MINIO_BUCKET`。生产环境应使用私有 bucket 和仅具备目标 bucket 读取权限的独立账号，浏览器只访问同源音频接口，不接触 MinIO 凭据。
+
 ## 数据整理
 
 源数据放在仓库外，输出目录也必须放在仓库外：
@@ -54,6 +57,7 @@ go run ./cmd/prepare-data \
 | `GET /api/v1/facets` | 朝代、作者、体裁、题材、词牌等聚合 |
 | `GET /api/v1/poems` | 多条件检索与分页 |
 | `GET /api/v1/poems/:id` | 诗词全文、拼音、译注与来源 |
+| `GET /api/v1/poems/:id/audio` | 支持 Range 请求的 MP3 朗读流；无资源时返回 404 |
 | `GET /api/v1/featured` | 按精选集推荐 |
 
 部署时由同源 Nginx 将 `/poetry/api/` 转发到后端，前端不会接触数据库或 MinIO 凭据。

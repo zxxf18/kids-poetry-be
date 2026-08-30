@@ -225,10 +225,10 @@ func escapeLike(v string) string {
 }
 
 func (s *MySQL) Get(ctx context.Context, id string) (*model.PoemPayload, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id,title,author,dynasty,kind,form,cipai,lines_json,pinyin_json,translation,annotations_json,appreciation,themes_json,collections_json,age_min,age_max,popular_score,content_hash,source_name,source_url,source_commit,source_id,license_note FROM poems WHERE id=?`, id)
+	row := s.db.QueryRowContext(ctx, `SELECT id,title,author,dynasty,kind,form,cipai,lines_json,pinyin_json,translation,annotations_json,appreciation,themes_json,collections_json,age_min,age_max,popular_score,EXISTS(SELECT 1 FROM poem_audio pa WHERE pa.poem_id=poems.id),content_hash,source_name,source_url,source_commit,source_id,license_note FROM poems WHERE id=?`, id)
 	var p model.PoemPayload
 	var lines, pinyin, annotations, themes, collections []byte
-	if err := row.Scan(&p.ID, &p.Title, &p.Author, &p.Dynasty, &p.Kind, &p.Form, &p.Cipai, &lines, &pinyin, &p.Translation, &annotations, &p.Appreciation, &themes, &collections, &p.AgeMin, &p.AgeMax, &p.PopularScore, &p.ContentHash, &p.Source.Name, &p.Source.URL, &p.Source.Commit, &p.Source.SourceID, &p.Source.LicenseNote); err != nil {
+	if err := row.Scan(&p.ID, &p.Title, &p.Author, &p.Dynasty, &p.Kind, &p.Form, &p.Cipai, &lines, &pinyin, &p.Translation, &annotations, &p.Appreciation, &themes, &collections, &p.AgeMin, &p.AgeMax, &p.PopularScore, &p.HasAudio, &p.ContentHash, &p.Source.Name, &p.Source.URL, &p.Source.Commit, &p.Source.SourceID, &p.Source.LicenseNote); err != nil {
 		return nil, err
 	}
 	_ = json.Unmarshal(lines, &p.Lines)
@@ -252,6 +252,16 @@ func (s *MySQL) Get(ctx context.Context, id string) (*model.PoemPayload, error) 
 		p.Collections = []string{}
 	}
 	return &p, nil
+}
+
+func (s *MySQL) Audio(ctx context.Context, poemID string) (*model.AudioMeta, error) {
+	var meta model.AudioMeta
+	err := s.db.QueryRowContext(ctx, `SELECT poem_id,object_key,mime_type,byte_size,duration_ms,updated_at FROM poem_audio WHERE poem_id=?`, poemID).
+		Scan(&meta.PoemID, &meta.ObjectKey, &meta.MimeType, &meta.ByteSize, &meta.DurationMS, &meta.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &meta, nil
 }
 
 func (s *MySQL) Count(ctx context.Context) (int, error) {

@@ -15,18 +15,20 @@ import (
 	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/rest"
 	"github.com/zeromicro/go-zero/rest/pathvar"
+	"github.com/zxxf18/kids-poetry-be/internal/audiostore"
 	"github.com/zxxf18/kids-poetry-be/internal/store"
 )
 
 type API struct {
 	store          *store.MySQL
+	audio          *audiostore.Store
 	datasetVersion string
 	facetsMu       sync.RWMutex
 	facetsCache    map[string][]store.FacetValue
 }
 
-func New(s *store.MySQL, datasetVersion string) *API {
-	a := &API{store: s, datasetVersion: datasetVersion}
+func New(s *store.MySQL, audio *audiostore.Store, datasetVersion string) *API {
+	a := &API{store: s, audio: audio, datasetVersion: datasetVersion}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
@@ -44,8 +46,41 @@ func (a *API) Register(server *rest.Server) {
 		{Method: http.MethodGet, Path: "/api/v1/facets", Handler: a.facets},
 		{Method: http.MethodGet, Path: "/api/v1/poems", Handler: a.listPoems},
 		{Method: http.MethodGet, Path: "/api/v1/poems/:id", Handler: a.getPoem},
+		{Method: http.MethodGet, Path: "/api/v1/poems/:id/audio", Handler: a.getPoemAudio},
 		{Method: http.MethodGet, Path: "/api/v1/featured", Handler: a.featured},
 	})
+}
+
+func (a *API) getPoemAudio(w http.ResponseWriter, r *http.Request) {
+	if a.audio == nil {
+		writeError(w, http.StatusServiceUnavailable, "audio_unavailable", "朗读服务暂时不可用")
+		return
+	}
+	id := strings.TrimSpace(pathvar.Vars(r)["id"])
+	meta, err := a.store.Audio(r.Context(), id)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "audio_not_found", "这首作品暂时还没有朗读")
+		return
+	}
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	object, info, err := a.audio.Open(r.Context(), meta.ObjectKey)
+	if err != nil {
+		logx.Errorf("open poetry audio %s: %v", id, err)
+		writeError(w, http.StatusServiceUnavailable, "audio_unavailable", "朗读暂时无法播放，请稍后再试")
+		return
+	}
+	defer object.Close()
+	contentType := meta.MimeType
+	if contentType == "" {
+		contentType = "audio/mpeg"
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "public, max-age=86400, immutable")
+	w.Header().Set("Accept-Ranges", "bytes")
+	http.ServeContent(w, r, id+".mp3", info.LastModified, object)
 }
 
 func (a *API) health(w http.ResponseWriter, r *http.Request) {

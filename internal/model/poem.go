@@ -28,8 +28,18 @@ type PoemPayload struct {
 	AgeMin       int        `json:"ageMin"`
 	AgeMax       int        `json:"ageMax"`
 	PopularScore int        `json:"popularScore"`
+	HasAudio     bool       `json:"hasAudio"`
 	ContentHash  string     `json:"contentHash"`
 	Source       SourceInfo `json:"source"`
+}
+
+type AudioMeta struct {
+	PoemID     string
+	ObjectKey  string
+	MimeType   string
+	ByteSize   int64
+	DurationMS int
+	UpdatedAt  time.Time
 }
 
 type PoemListItem struct {

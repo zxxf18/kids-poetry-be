@@ -4,6 +4,11 @@ Port: 8890
 Timeout: 10000
 Database:
   DSN: ${POETRY_DB_DSN}
+Audio:
+  Endpoint: ${POETRY_AUDIO_MINIO_ENDPOINT}
+  AccessKey: ${POETRY_AUDIO_MINIO_ACCESS_KEY}
+  SecretKey: ${POETRY_AUDIO_MINIO_SECRET_KEY}
+  Bucket: ${POETRY_AUDIO_MINIO_BUCKET}
+  UseSSL: false
 App:
   DatasetVersion: ${POETRY_DATASET_VERSION}
-
