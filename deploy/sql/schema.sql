@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS poems (
   KEY idx_poems_title (title),
   KEY idx_poems_form (form),
   KEY idx_poems_cipai (cipai),
-  KEY idx_poems_popular (popular_score, id)
+  KEY idx_poems_popular (popular_score DESC, id ASC)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS poem_tags (

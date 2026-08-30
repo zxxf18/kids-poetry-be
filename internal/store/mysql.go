@@ -44,7 +44,13 @@ func (s *MySQL) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
 func (s *MySQL) List(ctx context.Context, q Query) ([]model.PoemListItem, int, error) {
 	where, args := buildWhere(q)
 	var total int
-	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM poems p "+where, args...).Scan(&total); err != nil {
+	if isUnfiltered(q) {
+		var err error
+		total, err = s.Count(ctx)
+		if err != nil {
+			return nil, 0, err
+		}
+	} else if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM poems p "+where, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	order := "p.popular_score DESC, p.id ASC"
@@ -75,6 +81,10 @@ func (s *MySQL) List(ctx context.Context, q Query) ([]model.PoemListItem, int, e
 		items = append(items, item)
 	}
 	return items, total, rows.Err()
+}
+
+func isUnfiltered(q Query) bool {
+	return q.Q == "" && q.Dynasty == "" && q.Author == "" && q.Title == "" && q.Kind == "" && q.Form == "" && q.Theme == "" && q.Cipai == "" && q.Collection == "" && !q.HasTranslation
 }
 
 func buildWhere(q Query) (string, []any) {
@@ -163,7 +173,14 @@ func (s *MySQL) Get(ctx context.Context, id string) (*model.PoemPayload, error) 
 
 func (s *MySQL) Count(ctx context.Context) (int, error) {
 	var n int
-	err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM poems").Scan(&n)
+	err := s.db.QueryRowContext(ctx, "SELECT record_count FROM dataset_imports ORDER BY imported_at DESC LIMIT 1").Scan(&n)
+	if err == nil {
+		return n, nil
+	}
+	if err != sql.ErrNoRows {
+		return 0, err
+	}
+	err = s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM poems").Scan(&n)
 	return n, err
 }
 

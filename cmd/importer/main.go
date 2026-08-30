@@ -66,6 +66,9 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
+	if err = ensurePopularityIndex(ctx, s.DB()); err != nil {
+		fatal(fmt.Errorf("ensure popularity index: %w", err))
+	}
 	if err = ensureSearchIndex(ctx, s.DB()); err != nil {
 		fatal(fmt.Errorf("ensure search index: %w", err))
 	}
@@ -77,6 +80,25 @@ func main() {
 		}
 	}
 	fmt.Printf("imported=%d source=%s\n", result.Imported, *source)
+}
+
+func ensurePopularityIndex(ctx context.Context, db *sql.DB) error {
+	var definition sql.NullString
+	if err := db.QueryRowContext(ctx, `SELECT GROUP_CONCAT(CONCAT(column_name, ':', collation) ORDER BY seq_in_index)
+		FROM information_schema.statistics
+		WHERE table_schema=DATABASE() AND table_name='poems' AND index_name='idx_poems_popular'`).Scan(&definition); err != nil {
+		return err
+	}
+	if definition.Valid && definition.String == "popular_score:D,id:A" {
+		return nil
+	}
+	if definition.Valid && definition.String != "" {
+		_, err := db.ExecContext(ctx, `ALTER TABLE poems DROP INDEX idx_poems_popular,
+			ADD INDEX idx_poems_popular (popular_score DESC, id ASC)`)
+		return err
+	}
+	_, err := db.ExecContext(ctx, `ALTER TABLE poems ADD INDEX idx_poems_popular (popular_score DESC, id ASC)`)
+	return err
 }
 
 func ensureSearchIndex(ctx context.Context, db *sql.DB) error {

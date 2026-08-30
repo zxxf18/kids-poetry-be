@@ -1,11 +1,13 @@
-FROM scratch
+FROM --platform=linux/amd64 alpine:3.22
+
+RUN addgroup -S poetry && adduser -S -G poetry poetry
 
 WORKDIR /app
 COPY dist/linux-amd64/kids-poetry-api /app/server
 COPY dist/linux-amd64/kids-poetry-importer /app/importer
 COPY dist/linux-amd64/kids-poetry-minio-sync /app/minio-sync
 COPY etc/backend.docker.yaml /app/etc/backend.yaml
-USER 65532:65532
+USER poetry
 EXPOSE 8890
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 CMD ["/app/server", "-healthcheck"]
 ENTRYPOINT ["/app/server"]
