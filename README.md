@@ -57,4 +57,4 @@ go run ./cmd/prepare-data \
 
 部署时由同源 Nginx 将 `/poetry/api/` 转发到后端，前端不会接触数据库或 MinIO 凭据。
 
-常规构建使用多阶段 `Dockerfile`。受限网络环境也可以先交叉编译到已忽略的 `dist/linux-amd64/`，再用 `Dockerfile.release` 生成无基础系统、非 root 的 `scratch` 镜像；发布镜像包含 API、importer 和一次性 MinIO 同步工具三个静态二进制。同步工具只通过 S3 API 建 bucket 和上传版本化对象，不直接写 MinIO 数据目录。
+常规构建使用多阶段 `Dockerfile`。受限网络环境也可以先交叉编译到已忽略的 `dist/linux-amd64/`，再用 `Dockerfile.release` 生成显式面向 linux/amd64、以非 root 用户运行的轻量 Alpine 镜像；发布镜像包含 API、importer 和一次性 MinIO 同步工具三个静态二进制。同步工具只通过 S3 API 建 bucket 和上传版本化对象，不直接写 MinIO 数据目录。

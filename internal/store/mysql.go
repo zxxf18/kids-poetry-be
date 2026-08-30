@@ -42,7 +42,7 @@ func (s *MySQL) Close() error                   { return s.db.Close() }
 func (s *MySQL) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
 
 func (s *MySQL) List(ctx context.Context, q Query) ([]model.PoemListItem, int, error) {
-	where, args := buildWhere(q)
+	from, where, args := buildScope(q)
 	var total int
 	if isUnfiltered(q) {
 		var err error
@@ -50,19 +50,23 @@ func (s *MySQL) List(ctx context.Context, q Query) ([]model.PoemListItem, int, e
 		if err != nil {
 			return nil, 0, err
 		}
-	} else if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM poems p "+where, args...).Scan(&total); err != nil {
+	} else if query, countArgs, ok := tagOnlyCountQuery(q); ok {
+		if err := s.db.QueryRowContext(ctx, query, countArgs...).Scan(&total); err != nil {
+			return nil, 0, err
+		}
+	} else if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) "+from+" "+where, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	order := "p.popular_score DESC, p.id ASC"
 	if useFullText(q.Q) {
 		v := "%" + escapeLike(q.Q) + "%"
-		order = "(p.author=?) DESC,(p.title=?) DESC,(p.title LIKE ? ESCAPE '\\\\') DESC,p.popular_score DESC,MATCH(p.title,p.author,p.content_text,p.translation) AGAINST (? IN NATURAL LANGUAGE MODE) DESC,p.id ASC"
-		args = append(args, q.Q, q.Q, v, q.Q)
+		order = "(p.author=?) DESC,(p.title=?) DESC,(p.title LIKE ? ESCAPE '\\\\') DESC,p.popular_score DESC,MATCH(p.title,p.author,p.content_text,p.translation) AGAINST (? IN BOOLEAN MODE) DESC,p.id ASC"
+		args = append(args, q.Q, q.Q, v, fullTextPhrase(q.Q))
 	}
 	query := `SELECT p.id,p.title,p.author,p.dynasty,p.kind,p.form,p.cipai,
 		COALESCE(JSON_UNQUOTE(JSON_EXTRACT(p.lines_json,'$[0]')),''),p.themes_json,p.collections_json,
 		p.age_min,p.age_max,(JSON_LENGTH(p.pinyin_json)>0),(CHAR_LENGTH(p.translation)>0),(JSON_LENGTH(p.annotations_json)>0),p.popular_score
-		FROM poems p ` + where + " ORDER BY " + order + " LIMIT ? OFFSET ?"
+		` + from + " " + where + " ORDER BY " + order + " LIMIT ? OFFSET ?"
 	args = append(args, q.PageSize, (q.Page-1)*q.PageSize)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -87,6 +91,21 @@ func isUnfiltered(q Query) bool {
 	return q.Q == "" && q.Dynasty == "" && q.Author == "" && q.Title == "" && q.Kind == "" && q.Form == "" && q.Theme == "" && q.Cipai == "" && q.Collection == "" && !q.HasTranslation
 }
 
+func buildScope(q Query) (string, string, []any) {
+	from := "FROM poems p"
+	args := make([]any, 0, 18)
+	if q.Theme != "" {
+		from += " JOIN poem_tags theme_tag ON theme_tag.poem_id=p.id AND theme_tag.dimension='theme' AND theme_tag.value=?"
+		args = append(args, q.Theme)
+	}
+	if q.Collection != "" {
+		from += " JOIN poem_tags collection_tag ON collection_tag.poem_id=p.id AND collection_tag.dimension='collection' AND collection_tag.value=?"
+		args = append(args, q.Collection)
+	}
+	where, whereArgs := buildWhere(q)
+	return from, where, append(args, whereArgs...)
+}
+
 func buildWhere(q Query) (string, []any) {
 	clauses := []string{"1=1"}
 	args := make([]any, 0, 16)
@@ -98,9 +117,8 @@ func buildWhere(q Query) (string, []any) {
 	}
 	if q.Q != "" {
 		if useFullText(q.Q) {
-			v := "%" + escapeLike(q.Q) + "%"
-			clauses = append(clauses, "MATCH(p.title,p.author,p.content_text,p.translation) AGAINST (? IN NATURAL LANGUAGE MODE) AND (p.title LIKE ? ESCAPE '\\\\' OR p.author LIKE ? ESCAPE '\\\\' OR p.content_text LIKE ? ESCAPE '\\\\' OR p.translation LIKE ? ESCAPE '\\\\')")
-			args = append(args, q.Q, v, v, v, v)
+			clauses = append(clauses, "MATCH(p.title,p.author,p.content_text,p.translation) AGAINST (? IN BOOLEAN MODE)")
+			args = append(args, fullTextPhrase(q.Q))
 		} else {
 			v := "%" + escapeLike(q.Q) + "%"
 			clauses = append(clauses, "(p.title LIKE ? ESCAPE '\\\\' OR p.author LIKE ? ESCAPE '\\\\' OR p.content_text LIKE ? ESCAPE '\\\\' OR p.translation LIKE ? ESCAPE '\\\\')")
@@ -121,19 +139,36 @@ func buildWhere(q Query) (string, []any) {
 	if q.HasTranslation {
 		clauses = append(clauses, "CHAR_LENGTH(p.translation)>0")
 	}
+	return "WHERE " + strings.Join(clauses, " AND "), args
+}
+
+func tagOnlyCountQuery(q Query) (string, []any, bool) {
+	if q.Q != "" || q.Dynasty != "" || q.Author != "" || q.Title != "" || q.Kind != "" || q.Form != "" || q.Cipai != "" || q.HasTranslation {
+		return "", nil, false
+	}
+	if q.Theme != "" && q.Collection != "" {
+		return `SELECT COUNT(*) FROM poem_tags theme_tag
+			JOIN poem_tags collection_tag ON collection_tag.poem_id=theme_tag.poem_id
+				AND collection_tag.dimension='collection' AND collection_tag.value=?
+			WHERE theme_tag.dimension='theme' AND theme_tag.value=?`, []any{q.Collection, q.Theme}, true
+	}
 	if q.Theme != "" {
-		clauses = append(clauses, "EXISTS (SELECT 1 FROM poem_tags t WHERE t.poem_id=p.id AND t.dimension='theme' AND t.value=?)")
-		args = append(args, q.Theme)
+		return "SELECT COUNT(*) FROM poem_tags WHERE dimension='theme' AND value=?", []any{q.Theme}, true
 	}
 	if q.Collection != "" {
-		clauses = append(clauses, "EXISTS (SELECT 1 FROM poem_tags t WHERE t.poem_id=p.id AND t.dimension='collection' AND t.value=?)")
-		args = append(args, q.Collection)
+		return "SELECT COUNT(*) FROM poem_tags WHERE dimension='collection' AND value=?", []any{q.Collection}, true
 	}
-	return "WHERE " + strings.Join(clauses, " AND "), args
+	return "", nil, false
 }
 
 func useFullText(value string) bool {
 	return utf8.RuneCountInString(strings.TrimSpace(value)) >= 2
+}
+
+func fullTextPhrase(value string) string {
+	cleaned := strings.NewReplacer(`\\`, " ", `\"`, " ").Replace(strings.TrimSpace(value))
+	cleaned = strings.Join(strings.Fields(cleaned), " ")
+	return `"` + cleaned + `"`
 }
 
 func escapeLike(v string) string {

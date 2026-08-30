@@ -18,6 +18,12 @@ func TestUseFullText(t *testing.T) {
 	}
 }
 
+func TestFullTextPhrase(t *testing.T) {
+	if got := fullTextPhrase(`  明月\"几时有  `); got != `"明月 几时有"` {
+		t.Fatalf("unexpected phrase %q", got)
+	}
+}
+
 func TestIsUnfiltered(t *testing.T) {
 	if !isUnfiltered(Query{Page: 1, PageSize: 20}) {
 		t.Fatal("pagination alone should still use the dataset audit count")
@@ -27,5 +33,19 @@ func TestIsUnfiltered(t *testing.T) {
 	}
 	if isUnfiltered(Query{HasTranslation: true, Page: 1, PageSize: 20}) {
 		t.Fatal("the learning-data filter requires a filtered count")
+	}
+}
+
+func TestTagOnlyCountQuery(t *testing.T) {
+	query, args, ok := tagOnlyCountQuery(Query{Theme: "山水", Page: 1, PageSize: 20})
+	if !ok || query == "" || len(args) != 1 || args[0] != "山水" {
+		t.Fatalf("unexpected theme count query: ok=%v query=%q args=%v", ok, query, args)
+	}
+	_, args, ok = tagOnlyCountQuery(Query{Theme: "山水", Collection: "widely-known"})
+	if !ok || len(args) != 2 || args[0] != "widely-known" || args[1] != "山水" {
+		t.Fatalf("unexpected combined tag count args: ok=%v args=%v", ok, args)
+	}
+	if _, _, ok = tagOnlyCountQuery(Query{Theme: "山水", Dynasty: "唐"}); ok {
+		t.Fatal("poem fields require the joined count query")
 	}
 }
