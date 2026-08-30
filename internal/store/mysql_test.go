@@ -63,3 +63,15 @@ func TestBuildWhereUsesIndexedSearchPaths(t *testing.T) {
 		t.Fatalf("multi-character title search must narrow through full text: where=%q args=%v", where, args)
 	}
 }
+
+func TestSinglePrefixOnly(t *testing.T) {
+	if !isSinglePrefixOnly(Query{Q: "春", Page: 1, PageSize: 24}) {
+		t.Fatal("a standalone one-character query should use the covering prefix path")
+	}
+	if isSinglePrefixOnly(Query{Q: "春", Dynasty: "唐", Page: 1, PageSize: 24}) {
+		t.Fatal("a filtered query still requires the general search path")
+	}
+	if isSinglePrefixOnly(Query{Q: "李白", Page: 1, PageSize: 24}) {
+		t.Fatal("multi-character queries should use full text")
+	}
+}

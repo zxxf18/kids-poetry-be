@@ -27,8 +27,8 @@ CREATE TABLE IF NOT EXISTS poems (
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   KEY idx_poems_content_hash (content_hash),
   KEY idx_poems_dynasty (dynasty),
-  KEY idx_poems_author (author),
-  KEY idx_poems_title (title),
+  KEY idx_poems_author (author, popular_score DESC),
+  KEY idx_poems_title (title, popular_score DESC),
   KEY idx_poems_form (form),
   KEY idx_poems_cipai (cipai),
   KEY idx_poems_popular (popular_score DESC, id ASC)

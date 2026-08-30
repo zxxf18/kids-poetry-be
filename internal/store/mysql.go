@@ -42,6 +42,9 @@ func (s *MySQL) Close() error                   { return s.db.Close() }
 func (s *MySQL) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
 
 func (s *MySQL) List(ctx context.Context, q Query) ([]model.PoemListItem, int, error) {
+	if isSinglePrefixOnly(q) {
+		return s.listSinglePrefix(ctx, q)
+	}
 	from, where, scopeArgs := buildScope(q)
 	var total int
 	if isUnfiltered(q) {
@@ -81,8 +84,41 @@ func (s *MySQL) List(ctx context.Context, q Query) ([]model.PoemListItem, int, e
 	if err != nil {
 		return nil, 0, err
 	}
+	return scanPoemListRows(rows, q.PageSize, total)
+}
+
+func isSinglePrefixOnly(q Query) bool {
+	return q.Q != "" && !useFullText(q.Q) && q.Dynasty == "" && q.Author == "" && q.Title == "" && q.Kind == "" && q.Form == "" && q.Theme == "" && q.Cipai == "" && q.Collection == "" && !q.HasTranslation
+}
+
+func (s *MySQL) listSinglePrefix(ctx context.Context, q Query) ([]model.PoemListItem, int, error) {
+	prefix := escapeLike(q.Q) + "%"
+	candidates := `(SELECT id,popular_score FROM poems FORCE INDEX (idx_poems_title)
+		WHERE title LIKE ? ESCAPE '\\'
+		UNION
+		SELECT id,popular_score FROM poems FORCE INDEX (idx_poems_author)
+		WHERE author LIKE ? ESCAPE '\\')`
+	var total int
+	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+candidates+" candidates", prefix, prefix).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	query := `SELECT p.id,p.title,p.author,p.dynasty,p.kind,p.form,p.cipai,
+		COALESCE(JSON_UNQUOTE(JSON_EXTRACT(p.lines_json,'$[0]')),''),p.themes_json,p.collections_json,
+		p.age_min,p.age_max,(JSON_LENGTH(p.pinyin_json)>0),(CHAR_LENGTH(p.translation)>0),(JSON_LENGTH(p.annotations_json)>0),p.popular_score
+		FROM (SELECT candidates.id,candidates.popular_score FROM ` + candidates + ` candidates
+			ORDER BY candidates.popular_score DESC,candidates.id ASC LIMIT ? OFFSET ?
+		) ranked JOIN poems p ON p.id=ranked.id
+		ORDER BY ranked.popular_score DESC,ranked.id ASC`
+	rows, err := s.db.QueryContext(ctx, query, prefix, prefix, q.PageSize, (q.Page-1)*q.PageSize)
+	if err != nil {
+		return nil, 0, err
+	}
+	return scanPoemListRows(rows, q.PageSize, total)
+}
+
+func scanPoemListRows(rows *sql.Rows, capacity, total int) ([]model.PoemListItem, int, error) {
 	defer rows.Close()
-	items := make([]model.PoemListItem, 0, q.PageSize)
+	items := make([]model.PoemListItem, 0, capacity)
 	for rows.Next() {
 		var item model.PoemListItem
 		var themes, collections []byte
