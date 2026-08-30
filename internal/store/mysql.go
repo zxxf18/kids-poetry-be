@@ -76,7 +76,8 @@ func (s *MySQL) List(ctx context.Context, q Query) ([]model.PoemListItem, int, e
 	}
 	query := `SELECT p.id,p.title,p.author,p.dynasty,p.kind,p.form,p.cipai,
 		COALESCE(JSON_UNQUOTE(JSON_EXTRACT(p.lines_json,'$[0]')),''),p.themes_json,p.collections_json,
-		p.age_min,p.age_max,(JSON_LENGTH(p.pinyin_json)>0),(CHAR_LENGTH(p.translation)>0),(JSON_LENGTH(p.annotations_json)>0),p.popular_score
+		p.age_min,p.age_max,(JSON_LENGTH(p.pinyin_json)>0),(CHAR_LENGTH(p.translation)>0),(JSON_LENGTH(p.annotations_json)>0),p.popular_score,
+		(SELECT COUNT(*) FROM poems same_title WHERE same_title.title=p.title)
 		FROM (` + "SELECT " + rankSelect + " " + from + " " + where + " ORDER BY " + innerOrder + ` LIMIT ? OFFSET ?
 		) ranked JOIN poems p ON p.id=ranked.id ORDER BY ` + outerOrder
 	queryArgs = append(queryArgs, q.PageSize, (q.Page-1)*q.PageSize)
@@ -104,7 +105,8 @@ func (s *MySQL) listSinglePrefix(ctx context.Context, q Query) ([]model.PoemList
 	}
 	query := `SELECT p.id,p.title,p.author,p.dynasty,p.kind,p.form,p.cipai,
 		COALESCE(JSON_UNQUOTE(JSON_EXTRACT(p.lines_json,'$[0]')),''),p.themes_json,p.collections_json,
-		p.age_min,p.age_max,(JSON_LENGTH(p.pinyin_json)>0),(CHAR_LENGTH(p.translation)>0),(JSON_LENGTH(p.annotations_json)>0),p.popular_score
+		p.age_min,p.age_max,(JSON_LENGTH(p.pinyin_json)>0),(CHAR_LENGTH(p.translation)>0),(JSON_LENGTH(p.annotations_json)>0),p.popular_score,
+		(SELECT COUNT(*) FROM poems same_title WHERE same_title.title=p.title)
 		FROM (SELECT candidates.id,candidates.popular_score FROM ` + candidates + ` candidates
 			ORDER BY candidates.popular_score DESC,candidates.id ASC LIMIT ? OFFSET ?
 		) ranked JOIN poems p ON p.id=ranked.id
@@ -122,7 +124,7 @@ func scanPoemListRows(rows *sql.Rows, capacity, total int) ([]model.PoemListItem
 	for rows.Next() {
 		var item model.PoemListItem
 		var themes, collections []byte
-		if err := rows.Scan(&item.ID, &item.Title, &item.Author, &item.Dynasty, &item.Kind, &item.Form, &item.Cipai, &item.Excerpt, &themes, &collections, &item.AgeMin, &item.AgeMax, &item.HasPinyin, &item.HasTranslation, &item.HasAnnotations, &item.PopularScore); err != nil {
+		if err := rows.Scan(&item.ID, &item.Title, &item.Author, &item.Dynasty, &item.Kind, &item.Form, &item.Cipai, &item.Excerpt, &themes, &collections, &item.AgeMin, &item.AgeMax, &item.HasPinyin, &item.HasTranslation, &item.HasAnnotations, &item.PopularScore, &item.TitleCount); err != nil {
 			return nil, 0, err
 		}
 		_ = json.Unmarshal(themes, &item.Themes)

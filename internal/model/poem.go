@@ -49,6 +49,7 @@ type PoemListItem struct {
 	HasTranslation bool     `json:"hasTranslation"`
 	HasAnnotations bool     `json:"hasAnnotations"`
 	PopularScore   int      `json:"popularScore"`
+	TitleCount     int      `json:"titleCount"`
 }
 
 type DatasetManifest struct {
