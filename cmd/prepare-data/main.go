@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -36,6 +37,22 @@ type selectedPoem struct {
 	Tags       []string `json:"tags"`
 }
 
+type sourceFile struct {
+	Path string
+	Kind string
+}
+
+type qualityStats struct {
+	SourceRecords        int
+	SkippedInvalid       int
+	Total                int
+	WithPinyin           int
+	WithTranslation      int
+	WithAnnotations      int
+	WithAppreciation     int
+	CompleteLearningData int
+}
+
 var famous = map[string]int{
 	"李白|静夜思": 100, "王之涣|登鹳雀楼": 99, "李白|望庐山瀑布": 98, "李白|早发白帝城": 97,
 	"李白|赠汪伦": 96, "李白|黄鹤楼送孟浩然之广陵": 95, "杜甫|望岳": 94, "杜甫|春夜喜雨": 93,
@@ -43,6 +60,9 @@ var famous = map[string]int{
 	"孟郊|游子吟": 88,
 }
 var primarySchool = map[string]bool{"李白|静夜思": true, "王之涣|登鹳雀楼": true, "李白|望庐山瀑布": true, "李白|早发白帝城": true, "李白|赠汪伦": true, "李白|黄鹤楼送孟浩然之广陵": true, "杜甫|春夜喜雨": true, "杜甫|江南逢李龟年": true, "孟郊|游子吟": true, "张继|枫桥夜泊": true}
+var pinyinCorrections = map[string][]string{
+	"adcfe4db0c7f747783ceee65775aa7c8": {"jì lì dāng jì tiān xià lì", "qiú míng yīng qiú wàn shì míng"},
+}
 
 func main() {
 	poetryRoot := flag.String("poetry-source", "", "poetry-source checkout")
@@ -59,73 +79,52 @@ func main() {
 		fatal(err)
 	}
 	selectedByContent, selectedByTitle, cipaiByContent := loadChineseMetadata(*chineseRoot)
-	patterns := []struct{ pattern, kind string }{{filepath.Join(*poetryRoot, "source", "诗", "唐", "poetry.唐.000?.json"), "poem"}, {filepath.Join(*poetryRoot, "source", "词", "宋", "ci.宋.000?.json"), "ci"}}
-	items := []model.PoemPayload{}
-	seen := map[string]bool{}
-	for _, entry := range patterns {
-		files, err := filepath.Glob(entry.pattern)
-		if err != nil {
-			fatal(err)
-		}
-		sort.Strings(files)
-		for _, file := range files {
-			records := loadSource(file)
-			pinyinFile := strings.TrimSuffix(file, ".json") + ".pinyin.json"
-			pinyin := loadPinyin(pinyinFile)
-			for _, r := range records {
-				if strings.TrimSpace(r.Translation) == "" || len(r.Annotation) == 0 {
-					continue
-				}
-				r.Pinyin = pinyin[r.ID]
-				if len(r.Content) == 0 || len(r.Pinyin) != len(r.Content) {
-					continue
-				}
-				hash := contentHash(r.AuthorName, r.Title, r.Content)
-				if seen[hash] {
-					continue
-				}
-				seen[hash] = true
-				key := contentKey(r.AuthorName, r.Content)
-				tags := append([]string{}, selectedByContent[key]...)
-				tags = append(tags, selectedByTitle[titleKey(r.AuthorName, r.Title)]...)
-				cipai := ""
-				if entry.kind == "ci" {
-					cipai = cipaiByContent[key]
-					if cipai == "" {
-						cipai = r.Title
-					}
-				}
-				collections, score := collectionsFor(r.AuthorName, r.Title, strings.Join(r.Content, ""), tags)
-				themes := themesFor(r.Title, strings.Join(r.Content, ""), tags)
-				ageMin, ageMax := ageFor(r.Content, r.Annotation)
-				items = append(items, model.PoemPayload{ID: r.ID, Title: r.Title, Author: r.AuthorName, Dynasty: r.Dynasty, Kind: entry.kind, Form: formFor(entry.kind, r.Content), Cipai: cipai, Lines: r.Content, Pinyin: r.Pinyin, Translation: strings.TrimSpace(r.Translation), Annotations: r.Annotation, Appreciation: strings.TrimSpace(r.Appreciation), Themes: themes, Collections: collections, AgeMin: ageMin, AgeMax: ageMax, PopularScore: score, ContentHash: hash, Source: model.SourceInfo{Name: "snowtraces/poetry-source", URL: "https://github.com/snowtraces/poetry-source", Commit: *poetryCommit, SourceID: r.ID, LicenseNote: "项目代码为 MIT；公开渠道文本、现代译文和注释需按字段继续核查来源与授权。"}})
-			}
-		}
+	files := discoverSourceFiles(*poetryRoot)
+	if len(files) == 0 {
+		fatal(fmt.Errorf("no poetry-source shards found under %s", *poetryRoot))
 	}
-	sort.Slice(items, func(i, j int) bool {
-		if items[i].PopularScore == items[j].PopularScore {
-			return items[i].ID < items[j].ID
-		}
-		return items[i].PopularScore > items[j].PopularScore
-	})
 	dataPath := filepath.Join(*outDir, "poems.jsonl.gz")
-	if err := writeDataset(dataPath, items); err != nil {
+	stats, err := writeDataset(dataPath, files, selectedByContent, selectedByTitle, cipaiByContent, *poetryCommit)
+	if err != nil {
 		fatal(err)
 	}
 	digest := fileSHA(dataPath)
-	manifest := model.DatasetManifest{Version: *version, GeneratedAt: time.Now().UTC(), Count: len(items), SHA256: digest, Sources: map[string]string{"snowtraces/poetry-source": *poetryCommit, "chinese-poetry/chinese-poetry": *chineseCommit}, Selection: "唐诗与宋词 0000–0009 分片中，同时具有非空白话译文、注释和行级拼音且结构校验通过的记录；精选集、词牌与知名度信号由 chinese-poetry 和人工名单补充。"}
+	manifest := model.DatasetManifest{Version: *version, GeneratedAt: time.Now().UTC(), Count: stats.Total, SHA256: digest, Sources: map[string]string{"snowtraces/poetry-source": *poetryCommit, "chinese-poetry/chinese-poetry": *chineseCommit}, Selection: "snowtraces/poetry-source 中诗、词、曲的全部分片记录；正文和行级拼音做全量结构校验，仅跳过无法构成可阅读作品的空正文记录；译文、注释与赏析按源数据实际覆盖保留；精选集、词牌与知名度信号由 chinese-poetry 和人工名单补充。", Quality: map[string]int{"sourceRecords": stats.SourceRecords, "skippedInvalid": stats.SkippedInvalid, "withPinyin": stats.WithPinyin, "withTranslation": stats.WithTranslation, "withAnnotations": stats.WithAnnotations, "withAppreciation": stats.WithAppreciation, "completeLearningData": stats.CompleteLearningData}}
 	writeJSON(filepath.Join(*outDir, "manifest.json"), manifest)
 	attribution := `# 数据来源与使用说明
 
 - 主记录与拼音：snowtraces/poetry-source，固定提交 ` + *poetryCommit + `
 - 精选集、词牌与知名度辅助信息：chinese-poetry/chinese-poetry，固定提交 ` + *chineseCommit + `
 
-原诗词属于古代作品；仓库中的现代译文、注释、赏析等附加文本不因代码许可证而自动获得商业授权。本数据包保留字段级来源，当前用于个人学习型站点；对外商业发布前应继续完成文本来源审核，或替换为自有人工整理版本。
+收录范围为 poetry-source 诗、词、曲的全量分片；源仓唯一整首缺失的两行拼音记录由本项目人工补齐并在整理代码中保留固定修正。多数古代诗词原文已进入公共领域，但源仓也可能含近现代作品；仓库中的现代译文、注释、赏析等附加文本不因代码许可证而自动获得商业授权。本数据包保留字段级来源，当前用于个人学习型站点；对外商业发布前应按作品和附加文本继续完成来源审核，或替换为自有人工整理版本。
 `
 	if err := os.WriteFile(filepath.Join(*outDir, "ATTRIBUTION.md"), []byte(attribution), 0o644); err != nil {
 		fatal(err)
 	}
-	fmt.Printf("version=%s records=%d sha256=%s out=%s\n", *version, len(items), digest, *outDir)
+	fmt.Printf("version=%s source=%d records=%d skipped=%d pinyin=%d translation=%d annotations=%d complete=%d sha256=%s out=%s\n", *version, stats.SourceRecords, stats.Total, stats.SkippedInvalid, stats.WithPinyin, stats.WithTranslation, stats.WithAnnotations, stats.CompleteLearningData, digest, *outDir)
+}
+
+func discoverSourceFiles(root string) []sourceFile {
+	definitions := []struct {
+		Dir, Prefix, Kind string
+	}{
+		{Dir: "诗", Prefix: "poetry", Kind: "poem"},
+		{Dir: "词", Prefix: "ci", Kind: "ci"},
+		{Dir: "曲", Prefix: "qu", Kind: "qu"},
+	}
+	files := make([]sourceFile, 0, 600)
+	for _, definition := range definitions {
+		pattern := filepath.Join(root, "source", definition.Dir, "*", definition.Prefix+".*.[0-9][0-9][0-9][0-9].json")
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			fatal(err)
+		}
+		for _, path := range matches {
+			files = append(files, sourceFile{Path: path, Kind: definition.Kind})
+		}
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
+	return files
 }
 
 func loadSource(path string) []sourceRecord { var v []sourceRecord; decode(path, &v); return v }
@@ -184,6 +183,9 @@ func loadChineseMetadata(root string) (map[string][]string, map[string][]string,
 func formFor(kind string, lines []string) string {
 	if kind == "ci" {
 		return "词"
+	}
+	if kind == "qu" {
+		return "曲"
 	}
 	parts := clauses(lines)
 	if len(parts) == 0 {
@@ -353,21 +355,116 @@ func unique(v []string) []string {
 	sort.Strings(out)
 	return out
 }
-func writeDataset(path string, items []model.PoemPayload) error {
-	f, err := os.Create(path)
+func writeDataset(path string, files []sourceFile, selectedByContent, selectedByTitle map[string][]string, cipaiByContent map[string]string, poetryCommit string) (qualityStats, error) {
+	stats := qualityStats{}
+	temp, err := os.CreateTemp(filepath.Dir(path), ".poems-*.jsonl.gz")
 	if err != nil {
-		return err
+		return stats, err
 	}
-	defer f.Close()
-	gz := gzip.NewWriter(f)
+	tempPath := temp.Name()
+	defer os.Remove(tempPath)
+	gz := gzip.NewWriter(temp)
 	enc := json.NewEncoder(gz)
 	enc.SetEscapeHTML(false)
-	for _, item := range items {
-		if err := enc.Encode(item); err != nil {
-			return err
+	seenIDs := make(map[string]struct{}, 540000)
+	for _, file := range files {
+		records := loadSource(file.Path)
+		pinyin := loadPinyin(strings.TrimSuffix(file.Path, ".json") + ".pinyin.json")
+		for _, r := range records {
+			stats.SourceRecords++
+			if strings.TrimSpace(r.ID) == "" || strings.TrimSpace(r.AuthorName) == "" || strings.TrimSpace(r.Dynasty) == "" || len(r.Content) == 0 {
+				stats.SkippedInvalid++
+				continue
+			}
+			if strings.TrimSpace(r.Title) == "" {
+				r.Title = "无题"
+			}
+			if _, exists := seenIDs[r.ID]; exists {
+				return stats, fmt.Errorf("duplicate source id %s", r.ID)
+			}
+			seenIDs[r.ID] = struct{}{}
+			r.Pinyin = pinyin[r.ID]
+			if correction, ok := pinyinCorrections[r.ID]; ok {
+				r.Pinyin = correction
+			}
+			if len(r.Pinyin) != len(r.Content) {
+				return stats, fmt.Errorf("content and pinyin lines do not align in %s for %s: %d != %d", file.Path, r.ID, len(r.Content), len(r.Pinyin))
+			}
+			key := contentKey(r.AuthorName, r.Content)
+			tags := append([]string{}, selectedByContent[key]...)
+			tags = append(tags, selectedByTitle[titleKey(r.AuthorName, r.Title)]...)
+			cipai := ""
+			if file.Kind == "ci" || file.Kind == "qu" {
+				cipai = cipaiByContent[key]
+				if cipai == "" {
+					cipai = tuneFor(file.Kind, r.Title)
+				}
+			}
+			content := strings.Join(r.Content, "")
+			collections, score := collectionsFor(r.AuthorName, r.Title, content, tags)
+			themes := themesFor(r.Title, content, tags)
+			ageMin, ageMax := ageFor(r.Content, r.Annotation)
+			item := model.PoemPayload{ID: r.ID, Title: strings.TrimSpace(r.Title), Author: strings.TrimSpace(r.AuthorName), Dynasty: strings.TrimSpace(r.Dynasty), Kind: file.Kind, Form: formFor(file.Kind, r.Content), Cipai: strings.TrimSpace(cipai), Lines: r.Content, Pinyin: r.Pinyin, Translation: strings.TrimSpace(r.Translation), Annotations: r.Annotation, Appreciation: strings.TrimSpace(r.Appreciation), Themes: themes, Collections: collections, AgeMin: ageMin, AgeMax: ageMax, PopularScore: score, ContentHash: contentHash(r.AuthorName, r.Title, r.Content), Source: model.SourceInfo{Name: "snowtraces/poetry-source", URL: "https://github.com/snowtraces/poetry-source", Commit: poetryCommit, SourceID: r.ID, LicenseNote: "项目代码为 MIT；公开渠道文本、现代译文和注释需按字段继续核查来源与授权。"}}
+			if err := enc.Encode(item); err != nil {
+				return stats, err
+			}
+			stats.Total++
+			if hasPinyin(r.Pinyin) {
+				stats.WithPinyin++
+			}
+			if item.Translation != "" {
+				stats.WithTranslation++
+			}
+			if len(item.Annotations) > 0 {
+				stats.WithAnnotations++
+			}
+			if item.Appreciation != "" {
+				stats.WithAppreciation++
+			}
+			if hasPinyin(r.Pinyin) && item.Translation != "" && len(item.Annotations) > 0 {
+				stats.CompleteLearningData++
+			}
 		}
 	}
-	return gz.Close()
+	if err := gz.Close(); err != nil {
+		_ = temp.Close()
+		return stats, err
+	}
+	if err := temp.Close(); err != nil {
+		return stats, err
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		return stats, err
+	}
+	return stats, nil
+}
+
+func tuneFor(kind, title string) string {
+	title = strings.TrimSpace(title)
+	for _, separator := range []string{"（", "(", "·"} {
+		if separator != "·" {
+			if index := strings.Index(title, separator); index > 0 {
+				title = strings.TrimSpace(title[:index])
+			}
+		}
+	}
+	parts := strings.Split(title, "·")
+	if kind == "qu" && len(parts) >= 2 {
+		return strings.TrimSpace(parts[0]) + "·" + strings.TrimSpace(parts[1])
+	}
+	if len(parts) > 0 {
+		return strings.TrimSpace(parts[0])
+	}
+	return title
+}
+
+func hasPinyin(lines []string) bool {
+	for _, line := range lines {
+		if strings.TrimSpace(line) != "" {
+			return true
+		}
+	}
+	return false
 }
 func writeJSON(path string, v any) {
 	data, err := json.MarshalIndent(v, "", "  ")
@@ -380,11 +477,15 @@ func writeJSON(path string, v any) {
 	}
 }
 func fileSHA(path string) string {
-	data, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		fatal(err)
 	}
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
+	defer f.Close()
+	h := sha256.New()
+	if _, err = io.Copy(h, f); err != nil {
+		fatal(err)
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 func fatal(err error) { fmt.Fprintln(os.Stderr, err); os.Exit(1) }

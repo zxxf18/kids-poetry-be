@@ -24,3 +24,15 @@ func TestFamousScoreUsesLineMarkerForSharedCipai(t *testing.T) {
 		t.Fatalf("expected canonical work score, got %d", got)
 	}
 }
+
+func TestTuneFor(t *testing.T) {
+	if got := tuneFor("ci", "水调歌头·明月几时有"); got != "水调歌头" {
+		t.Fatalf("unexpected ci tune %q", got)
+	}
+	if got := tuneFor("qu", "双调·水仙子·夜雨"); got != "双调·水仙子" {
+		t.Fatalf("unexpected qu tune %q", got)
+	}
+	if got := tuneFor("ci", "浣溪沙（其一）"); got != "浣溪沙" {
+		t.Fatalf("unexpected parenthesized tune %q", got)
+	}
+}

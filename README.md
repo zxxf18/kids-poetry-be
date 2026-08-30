@@ -7,14 +7,15 @@
 - 按关键词、朝代、作者、题目、内容类型、体裁、题材、词牌和精选集检索
 - “流传最广”“小学精选”“经典选本”等独立推荐集合
 - 返回正文、行级拼音、注释、白话译文、赏析和字段级来源
-- gzip JSONL 幂等导入，记录数据集版本、对象路径、条数和 SHA-256
+- gzip JSONL 百条批量幂等导入，记录数据集版本、对象路径、条数和 SHA-256
+- MySQL ngram 中文全文索引：精确短语过滤后按作者、题目、知名度和相关度排序
 - `/api/v1/healthz` 数据库健康检查
 
 ## 数据边界
 
-整理工具从固定 Git 提交读取 `snowtraces/poetry-source`，并用 `chinese-poetry/chinese-poetry` 补充精选集、词牌和知名度信号。发布集只收录正文、行级拼音、白话译文和注释同时存在且结构校验通过的记录。
+整理工具从固定 Git 提交读取 `snowtraces/poetry-source` 的诗、词、曲全部分片，并用 `chinese-poetry/chinese-poetry` 补充精选集、词牌和知名度信号。当前全量快照扫描 531,002 条源记录，跳过 1 条空正文，生成 531,001 条可阅读记录；所有作品有正文拼音，译文、注释和赏析按源数据实际覆盖保留，接口不会把缺失字段伪装成完整译注。
 
-古诗词原文属于公共领域，但现代译文、注释和赏析不因代码仓库许可证而自动获得商业授权。当前数据集适合个人学习型站点；商业化前必须完成文本来源审核或替换为自有整理版本。
+多数古代诗词原文已进入公共领域，但仓库也可能含近现代作品；现代译文、注释和赏析更不因代码仓库许可证而自动获得商业授权。当前数据集适合个人学习型站点；商业化前必须按作品和附加文本完成来源审核，或替换为自有整理版本。
 
 ## 本地运行
 
@@ -23,7 +24,7 @@ go test ./...
 mysql < deploy/sql/schema.sql
 POETRY_DB_DSN='user:password@tcp(127.0.0.1:3306)/kids_poetry?charset=utf8mb4&parseTime=true' \
   go run ./cmd/importer -source file -file /path/to/poems.jsonl.gz -version 2026-08-30.v1 \
-  -count 1406 -sha256 '<manifest sha256>' -prune
+  -count '<manifest count>' -sha256 '<manifest sha256>' -prune
 POETRY_DB_DSN='user:password@tcp(127.0.0.1:3306)/kids_poetry?charset=utf8mb4&parseTime=true' \
 POETRY_DATASET_VERSION='2026-08-30.v1' \
   go run ./cmd/server -f etc/backend.example.yaml
@@ -41,7 +42,7 @@ go run ./cmd/prepare-data \
   -version 2026-08-30.v1
 ```
 
-输出包含 `poems.jsonl.gz`、`manifest.json` 和 `ATTRIBUTION.md`。推荐通过 MinIO S3 API上传到私有 bucket，再由 importer 从对象存储导入；不要直接写 MinIO 的磁盘目录。完整快照导入时传入 manifest 的条数和 SHA-256，并显式开启 `-prune`，校验与旧记录清理会在同一事务提交前完成。
+输出包含 `poems.jsonl.gz`、`manifest.json` 和 `ATTRIBUTION.md`。`manifest.json` 同时记录源条数、跳过条数以及拼音、译文、注释、赏析覆盖数。推荐通过 MinIO S3 API 上传到私有 bucket，再由 importer 从对象存储导入；不要直接写 MinIO 的磁盘目录。完整快照导入时传入 manifest 的条数和 SHA-256，并显式开启 `-prune`，校验与旧记录清理会在同一事务提交前完成。首次全量导入完成后，importer 会自动创建 MySQL `ngram` 全文索引，避免建索引拖慢 53 万条初始写入。
 
 ## API
 

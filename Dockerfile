@@ -19,5 +19,6 @@ COPY --from=builder /out/kids-poetry-minio-sync /app/minio-sync
 COPY etc/backend.docker.yaml /app/etc/backend.yaml
 USER poetry
 EXPOSE 8890
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 CMD ["/app/server", "-healthcheck"]
 ENTRYPOINT ["/app/server"]
 CMD ["-f", "/app/etc/backend.yaml"]

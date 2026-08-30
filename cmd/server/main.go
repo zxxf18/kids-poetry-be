@@ -3,7 +3,9 @@ package main
 import (
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
+	"time"
 
 	"github.com/zeromicro/go-zero/core/conf"
 	"github.com/zeromicro/go-zero/core/logx"
@@ -15,7 +17,17 @@ import (
 
 func main() {
 	configFile := flag.String("f", "etc/backend.example.yaml", "config file")
+	healthcheck := flag.Bool("healthcheck", false, "check the local API and exit")
 	flag.Parse()
+	if *healthcheck {
+		client := http.Client{Timeout: 3 * time.Second}
+		response, err := client.Get("http://127.0.0.1:8890/api/v1/healthz")
+		if err != nil || response.StatusCode != http.StatusOK {
+			os.Exit(1)
+		}
+		_ = response.Body.Close()
+		return
+	}
 	data, err := os.ReadFile(*configFile)
 	if err != nil {
 		panic(err)

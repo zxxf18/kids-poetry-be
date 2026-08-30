@@ -45,7 +45,9 @@ type PoemListItem struct {
 	Collections    []string `json:"collections"`
 	AgeMin         int      `json:"ageMin"`
 	AgeMax         int      `json:"ageMax"`
+	HasPinyin      bool     `json:"hasPinyin"`
 	HasTranslation bool     `json:"hasTranslation"`
+	HasAnnotations bool     `json:"hasAnnotations"`
 	PopularScore   int      `json:"popularScore"`
 }
 
@@ -56,4 +58,5 @@ type DatasetManifest struct {
 	SHA256      string            `json:"sha256"`
 	Sources     map[string]string `json:"sources"`
 	Selection   string            `json:"selection"`
+	Quality     map[string]int    `json:"quality"`
 }

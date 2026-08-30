@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"flag"
 	"fmt"
 	"io"
@@ -65,6 +66,9 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
+	if err = ensureSearchIndex(ctx, s.DB()); err != nil {
+		fatal(fmt.Errorf("ensure search index: %w", err))
+	}
 	if strings.TrimSpace(*version) != "" {
 		_, err = s.DB().ExecContext(ctx, `INSERT INTO dataset_imports(version,object_key,record_count,sha256)
 			VALUES(?,?,?,?) ON DUPLICATE KEY UPDATE object_key=VALUES(object_key),record_count=VALUES(record_count),sha256=VALUES(sha256),imported_at=CURRENT_TIMESTAMP`, *version, *objectKey, result.Imported, result.SHA256)
@@ -73,6 +77,20 @@ func main() {
 		}
 	}
 	fmt.Printf("imported=%d source=%s\n", result.Imported, *source)
+}
+
+func ensureSearchIndex(ctx context.Context, db *sql.DB) error {
+	var count int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM information_schema.statistics
+		WHERE table_schema=DATABASE() AND table_name='poems' AND index_name='ft_poems_search'`).Scan(&count); err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+	_, err := db.ExecContext(ctx, `ALTER TABLE poems ADD FULLTEXT KEY ft_poems_search
+		(title,author,content_text,translation) WITH PARSER ngram`)
+	return err
 }
 func env(key, fallback string) string {
 	if v := strings.TrimSpace(os.Getenv(key)); v != "" {

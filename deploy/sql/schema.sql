@@ -1,12 +1,12 @@
 CREATE TABLE IF NOT EXISTS poems (
   id VARCHAR(64) PRIMARY KEY,
-  title VARCHAR(255) NOT NULL,
-  author VARCHAR(128) NOT NULL,
+  title VARCHAR(512) NOT NULL,
+  author VARCHAR(255) NOT NULL,
   dynasty VARCHAR(32) NOT NULL,
   kind VARCHAR(24) NOT NULL,
   form VARCHAR(64) NOT NULL,
-  cipai VARCHAR(128) NOT NULL DEFAULT '',
-  content_text TEXT NOT NULL,
+  cipai VARCHAR(255) NOT NULL DEFAULT '',
+  content_text MEDIUMTEXT NOT NULL,
   lines_json JSON NOT NULL,
   pinyin_json JSON NOT NULL,
   translation TEXT NOT NULL,
@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS poems (
   license_note VARCHAR(512) NOT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  UNIQUE KEY uk_poems_content_hash (content_hash),
+  KEY idx_poems_content_hash (content_hash),
   KEY idx_poems_dynasty (dynasty),
   KEY idx_poems_author (author),
   KEY idx_poems_title (title),
@@ -50,4 +50,3 @@ CREATE TABLE IF NOT EXISTS dataset_imports (
   sha256 CHAR(64) NOT NULL,
   imported_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/zxxf18/kids-poetry-be/internal/model"
@@ -47,9 +48,14 @@ func (s *MySQL) List(ctx context.Context, q Query) ([]model.PoemListItem, int, e
 		return nil, 0, err
 	}
 	order := "p.popular_score DESC, p.id ASC"
+	if useFullText(q.Q) {
+		v := "%" + escapeLike(q.Q) + "%"
+		order = "(p.author=?) DESC,(p.title=?) DESC,(p.title LIKE ? ESCAPE '\\\\') DESC,p.popular_score DESC,MATCH(p.title,p.author,p.content_text,p.translation) AGAINST (? IN NATURAL LANGUAGE MODE) DESC,p.id ASC"
+		args = append(args, q.Q, q.Q, v, q.Q)
+	}
 	query := `SELECT p.id,p.title,p.author,p.dynasty,p.kind,p.form,p.cipai,
 		COALESCE(JSON_UNQUOTE(JSON_EXTRACT(p.lines_json,'$[0]')),''),p.themes_json,p.collections_json,
-		p.age_min,p.age_max,(CHAR_LENGTH(p.translation)>0),p.popular_score
+		p.age_min,p.age_max,(JSON_LENGTH(p.pinyin_json)>0),(CHAR_LENGTH(p.translation)>0),(JSON_LENGTH(p.annotations_json)>0),p.popular_score
 		FROM poems p ` + where + " ORDER BY " + order + " LIMIT ? OFFSET ?"
 	args = append(args, q.PageSize, (q.Page-1)*q.PageSize)
 	rows, err := s.db.QueryContext(ctx, query, args...)
@@ -61,7 +67,7 @@ func (s *MySQL) List(ctx context.Context, q Query) ([]model.PoemListItem, int, e
 	for rows.Next() {
 		var item model.PoemListItem
 		var themes, collections []byte
-		if err := rows.Scan(&item.ID, &item.Title, &item.Author, &item.Dynasty, &item.Kind, &item.Form, &item.Cipai, &item.Excerpt, &themes, &collections, &item.AgeMin, &item.AgeMax, &item.HasTranslation, &item.PopularScore); err != nil {
+		if err := rows.Scan(&item.ID, &item.Title, &item.Author, &item.Dynasty, &item.Kind, &item.Form, &item.Cipai, &item.Excerpt, &themes, &collections, &item.AgeMin, &item.AgeMax, &item.HasPinyin, &item.HasTranslation, &item.HasAnnotations, &item.PopularScore); err != nil {
 			return nil, 0, err
 		}
 		_ = json.Unmarshal(themes, &item.Themes)
@@ -81,11 +87,20 @@ func buildWhere(q Query) (string, []any) {
 		}
 	}
 	if q.Q != "" {
-		v := "%" + escapeLike(q.Q) + "%"
-		clauses = append(clauses, "(p.title LIKE ? ESCAPE '\\\\' OR p.author LIKE ? ESCAPE '\\\\' OR p.content_text LIKE ? ESCAPE '\\\\' OR p.translation LIKE ? ESCAPE '\\\\')")
-		args = append(args, v, v, v, v)
+		if useFullText(q.Q) {
+			v := "%" + escapeLike(q.Q) + "%"
+			clauses = append(clauses, "MATCH(p.title,p.author,p.content_text,p.translation) AGAINST (? IN NATURAL LANGUAGE MODE) AND (p.title LIKE ? ESCAPE '\\\\' OR p.author LIKE ? ESCAPE '\\\\' OR p.content_text LIKE ? ESCAPE '\\\\' OR p.translation LIKE ? ESCAPE '\\\\')")
+			args = append(args, q.Q, v, v, v, v)
+		} else {
+			v := "%" + escapeLike(q.Q) + "%"
+			clauses = append(clauses, "(p.title LIKE ? ESCAPE '\\\\' OR p.author LIKE ? ESCAPE '\\\\' OR p.content_text LIKE ? ESCAPE '\\\\' OR p.translation LIKE ? ESCAPE '\\\\')")
+			args = append(args, v, v, v, v)
+		}
 	}
-	like("p.author", q.Author)
+	if q.Author != "" {
+		clauses = append(clauses, "p.author=?")
+		args = append(args, q.Author)
+	}
 	like("p.title", q.Title)
 	for column, value := range map[string]string{"p.dynasty": q.Dynasty, "p.kind": q.Kind, "p.form": q.Form, "p.cipai": q.Cipai} {
 		if value != "" {
@@ -107,6 +122,10 @@ func buildWhere(q Query) (string, []any) {
 	return "WHERE " + strings.Join(clauses, " AND "), args
 }
 
+func useFullText(value string) bool {
+	return utf8.RuneCountInString(strings.TrimSpace(value)) >= 2
+}
+
 func escapeLike(v string) string {
 	r := strings.NewReplacer("\\", "\\\\", "%", "\\%", "_", "\\_")
 	return r.Replace(strings.TrimSpace(v))
@@ -124,6 +143,21 @@ func (s *MySQL) Get(ctx context.Context, id string) (*model.PoemPayload, error) 
 	_ = json.Unmarshal(annotations, &p.Annotations)
 	_ = json.Unmarshal(themes, &p.Themes)
 	_ = json.Unmarshal(collections, &p.Collections)
+	if p.Lines == nil {
+		p.Lines = []string{}
+	}
+	if p.Pinyin == nil {
+		p.Pinyin = []string{}
+	}
+	if p.Annotations == nil {
+		p.Annotations = []string{}
+	}
+	if p.Themes == nil {
+		p.Themes = []string{}
+	}
+	if p.Collections == nil {
+		p.Collections = []string{}
+	}
 	return &p, nil
 }
 
