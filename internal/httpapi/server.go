@@ -137,20 +137,31 @@ func (a *API) featured(w http.ResponseWriter, r *http.Request) {
 		collection = "widely-known"
 	}
 	random := r.URL.Query().Get("random") == "true"
-	limit := parseInt(r.URL.Query().Get("limit"), 12, 1, 50)
+	limit := parseInt(r.URL.Query().Get("limit"), 12, 1, 24)
+	candidateLimit := limit
 	if random {
-		limit = 50
+		candidateLimit = 300
 	}
-	items, total, err := a.store.List(r.Context(), store.Query{Collection: collection, Page: 1, PageSize: limit})
+	items, total, err := a.store.List(r.Context(), store.Query{Collection: collection, Page: 1, PageSize: candidateLimit})
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
 	if random && len(items) > 0 {
-		items = items[rand.IntN(len(items)):]
-		items = items[:1]
+		items = randomSample(items, limit)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": total, "collection": collection})
+}
+
+func randomSample[T any](items []T, limit int) []T {
+	for index := len(items) - 1; index > 0; index-- {
+		target := rand.IntN(index + 1)
+		items[index], items[target] = items[target], items[index]
+	}
+	if limit >= 0 && len(items) > limit {
+		return items[:limit]
+	}
+	return items
 }
 
 func (a *API) getPoem(w http.ResponseWriter, r *http.Request) {
