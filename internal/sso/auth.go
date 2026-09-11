@@ -128,7 +128,7 @@ func (s *Service) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := strings.SplitN(c.Value, "|", 3)
-	if len(p) != 3 || !hmac.Equal([]byte(p[0]), []byte(r.URL.Query().Get("state"))) {
+	if len(p) != 3 || p[0] == "" || p[1] == "" || !hmac.Equal([]byte(p[0]), []byte(r.URL.Query().Get("state"))) {
 		http.Error(w, "invalid SSO state", 400)
 		return
 	}
@@ -138,7 +138,8 @@ func (s *Service) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	claims := struct {
-		jwt.StandardClaims
+		jwt.RegisteredClaims
+		AuthorizedParty   string `json:"azp"`
 		Nonce             string `json:"nonce"`
 		Email             string `json:"email"`
 		EmailVerified     bool   `json:"email_verified"`
@@ -156,7 +157,9 @@ func (s *Service) Callback(w http.ResponseWriter, r *http.Request) {
 		}
 		return key, nil
 	})
-	if err != nil || tok == nil || !tok.Valid || claims.Issuer != strings.TrimSuffix(s.cfg.Issuer, "/") || !audienceContains(claims.Audience, s.cfg.ClientID) || claims.Nonce != p[1] || !claims.EmailVerified || strings.TrimSpace(claims.Email) == "" {
+	// RegisteredClaims accepts both OIDC audience encodings, including Casdoor's array.
+	partyValid := claims.AuthorizedParty == s.cfg.ClientID || (claims.AuthorizedParty == "" && len(claims.Audience) == 1)
+	if err != nil || tok == nil || !tok.Valid || claims.Issuer != strings.TrimSuffix(s.cfg.Issuer, "/") || !claims.VerifyAudience(s.cfg.ClientID, true) || !partyValid || claims.Nonce != p[1] || claims.ExpiresAt == nil || strings.TrimSpace(claims.Subject) == "" || !claims.EmailVerified || strings.TrimSpace(claims.Email) == "" {
 		http.Error(w, "invalid or unverified SSO identity", 403)
 		return
 	}
@@ -174,10 +177,14 @@ func (s *Service) Callback(w http.ResponseWriter, r *http.Request) {
 			role = "admin"
 		}
 	}
-	encoded, _ := s.sign(session{Subject: claims.Subject, Email: claims.Email, Username: username, DisplayName: name, EmailVerified: true, Role: role, ExpiresAt: time.Now().Add(24 * time.Hour).Unix()})
+	encoded, err := s.sign(session{Subject: claims.Subject, Email: claims.Email, Username: username, DisplayName: name, EmailVerified: true, Role: role, ExpiresAt: time.Now().Add(24 * time.Hour).Unix()})
+	if err != nil {
+		http.Error(w, "SSO session unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	http.SetCookie(w, &http.Cookie{Name: s.cfg.CookieName, Value: encoded, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: 86400})
 	setCookie(w, "sso_state", "", -1)
-	http.Redirect(w, r, p[2], 302)
+	http.Redirect(w, r, safeReturnTo(p[2]), 302)
 }
 func (s *Service) Me(w http.ResponseWriter, r *http.Request) {
 	v, e := s.read(r)
@@ -279,9 +286,6 @@ func getJSON(ctx context.Context, raw string, out any) error {
 		return errors.New("OIDC endpoint unavailable")
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
-}
-func audienceContains(a, want string) bool {
-	return a == want
 }
 func randomToken(n int) (string, error) {
 	b := make([]byte, n)
