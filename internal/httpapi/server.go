@@ -16,6 +16,7 @@ import (
 	"github.com/zeromicro/go-zero/rest"
 	"github.com/zeromicro/go-zero/rest/pathvar"
 	"github.com/zxxf18/kids-poetry-be/internal/audiostore"
+	"github.com/zxxf18/kids-poetry-be/internal/sso"
 	"github.com/zxxf18/kids-poetry-be/internal/store"
 )
 
@@ -23,12 +24,13 @@ type API struct {
 	store          *store.MySQL
 	audio          *audiostore.Store
 	datasetVersion string
+	auth           *sso.Service
 	facetsMu       sync.RWMutex
 	facetsCache    map[string][]store.FacetValue
 }
 
-func New(s *store.MySQL, audio *audiostore.Store, datasetVersion string) *API {
-	a := &API{store: s, audio: audio, datasetVersion: datasetVersion}
+func New(s *store.MySQL, audio *audiostore.Store, datasetVersion string, auth *sso.Service) *API {
+	a := &API{store: s, audio: audio, datasetVersion: datasetVersion, auth: auth}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
@@ -41,14 +43,30 @@ func New(s *store.MySQL, audio *audiostore.Store, datasetVersion string) *API {
 
 func (a *API) Register(server *rest.Server) {
 	server.AddRoutes([]rest.Route{
+		{Method: http.MethodGet, Path: "/auth/login", Handler: a.auth.Login},
+		{Method: http.MethodGet, Path: "/auth/callback", Handler: a.auth.Callback},
+		{Method: http.MethodGet, Path: "/api/v1/auth/me", Handler: a.auth.Me},
+		{Method: http.MethodPost, Path: "/api/v1/auth/logout", Handler: a.auth.Logout},
+	})
+	server.AddRoutes([]rest.Route{
 		{Method: http.MethodGet, Path: "/api/v1/healthz", Handler: a.health},
 		{Method: http.MethodGet, Path: "/api/v1/meta", Handler: a.meta},
 		{Method: http.MethodGet, Path: "/api/v1/facets", Handler: a.facets},
-		{Method: http.MethodGet, Path: "/api/v1/poems", Handler: a.listPoems},
-		{Method: http.MethodGet, Path: "/api/v1/poems/:id", Handler: a.getPoem},
-		{Method: http.MethodGet, Path: "/api/v1/poems/:id/audio", Handler: a.getPoemAudio},
+		{Method: http.MethodGet, Path: "/api/v1/poems", Handler: a.listPoemsWithAuthPolicy},
+		{Method: http.MethodGet, Path: "/api/v1/poems/:id", Handler: a.auth.Require(a.getPoem)},
+		{Method: http.MethodGet, Path: "/api/v1/poems/:id/audio", Handler: a.auth.Require(a.getPoemAudio)},
 		{Method: http.MethodGet, Path: "/api/v1/featured", Handler: a.featured},
 	})
+}
+
+func (a *API) listPoemsWithAuthPolicy(w http.ResponseWriter, r *http.Request) {
+	for _, key := range []string{"q", "dynasty", "author", "title", "kind", "form", "theme", "cipai", "collection"} {
+		if strings.TrimSpace(r.URL.Query().Get(key)) != "" {
+			a.auth.Require(a.listPoems)(w, r)
+			return
+		}
+	}
+	a.listPoems(w, r)
 }
 
 func (a *API) getPoemAudio(w http.ResponseWriter, r *http.Request) {

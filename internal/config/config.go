@@ -17,4 +17,13 @@ type Config struct {
 	App struct {
 		DatasetVersion string
 	}
+	OIDC struct {
+		Issuer        string
+		ClientID      string
+		ClientSecret  string
+		RedirectURL   string
+		SessionSecret string
+		CookieName    string
+		AdminEmails   string
+	}
 }

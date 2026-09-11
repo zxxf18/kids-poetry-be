@@ -12,3 +12,11 @@ Audio:
   UseSSL: false
 App:
   DatasetVersion: ${POETRY_DATASET_VERSION}
+OIDC:
+  Issuer: ${POETRY_OIDC_ISSUER}
+  ClientID: ${POETRY_OIDC_CLIENT_ID}
+  ClientSecret: ${POETRY_OIDC_CLIENT_SECRET}
+  RedirectURL: ${POETRY_OIDC_REDIRECT_URL}
+  SessionSecret: ${POETRY_OIDC_SESSION_SECRET}
+  CookieName: poetry_session
+  AdminEmails: ${POETRY_ADMIN_EMAILS}
