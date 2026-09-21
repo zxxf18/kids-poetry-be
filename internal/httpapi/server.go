@@ -53,19 +53,13 @@ func (a *API) Register(server *rest.Server) {
 		{Method: http.MethodGet, Path: "/api/v1/meta", Handler: a.meta},
 		{Method: http.MethodGet, Path: "/api/v1/facets", Handler: a.facets},
 		{Method: http.MethodGet, Path: "/api/v1/poems", Handler: a.listPoemsWithAuthPolicy},
-		{Method: http.MethodGet, Path: "/api/v1/poems/:id", Handler: a.auth.Require(a.getPoem)},
-		{Method: http.MethodGet, Path: "/api/v1/poems/:id/audio", Handler: a.auth.Require(a.getPoemAudio)},
+		{Method: http.MethodGet, Path: "/api/v1/poems/:id", Handler: a.getPoem},
+		{Method: http.MethodGet, Path: "/api/v1/poems/:id/audio", Handler: a.getPoemAudio},
 		{Method: http.MethodGet, Path: "/api/v1/featured", Handler: a.featured},
 	})
 }
 
 func (a *API) listPoemsWithAuthPolicy(w http.ResponseWriter, r *http.Request) {
-	for _, key := range []string{"q", "dynasty", "author", "title", "kind", "form", "theme", "cipai", "collection"} {
-		if strings.TrimSpace(r.URL.Query().Get(key)) != "" {
-			a.auth.Require(a.listPoems)(w, r)
-			return
-		}
-	}
 	a.listPoems(w, r)
 }
 
