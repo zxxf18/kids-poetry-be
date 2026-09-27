@@ -16,6 +16,10 @@ type Config struct {
 	}
 	App struct {
 		DatasetVersion string
+		// RequireAuth protects filtered catalog queries, poem details, and audio
+		// playback with the existing SSO session middleware. Keep this false to
+		// allow anonymous reading while retaining the login endpoints.
+		RequireAuth bool
 	}
 	OIDC struct {
 		Issuer        string

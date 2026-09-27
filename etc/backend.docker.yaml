@@ -12,6 +12,7 @@ Audio:
   UseSSL: false
 App:
   DatasetVersion: ${POETRY_DATASET_VERSION}
+  RequireAuth: ${POETRY_REQUIRE_AUTH}
 OIDC:
   Issuer: ${POETRY_OIDC_ISSUER}
   ClientID: ${POETRY_OIDC_CLIENT_ID}

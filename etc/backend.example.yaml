@@ -12,3 +12,4 @@ Audio:
   UseSSL: false
 App:
   DatasetVersion: ${POETRY_DATASET_VERSION}
+  RequireAuth: false

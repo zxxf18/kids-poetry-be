@@ -25,12 +25,13 @@ type API struct {
 	audio          *audiostore.Store
 	datasetVersion string
 	auth           *sso.Service
+	authRequired   bool
 	facetsMu       sync.RWMutex
 	facetsCache    map[string][]store.FacetValue
 }
 
-func New(s *store.MySQL, audio *audiostore.Store, datasetVersion string, auth *sso.Service) *API {
-	a := &API{store: s, audio: audio, datasetVersion: datasetVersion, auth: auth}
+func New(s *store.MySQL, audio *audiostore.Store, datasetVersion string, auth *sso.Service, authRequired bool) *API {
+	a := &API{store: s, audio: audio, datasetVersion: datasetVersion, auth: auth, authRequired: authRequired}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
@@ -53,14 +54,34 @@ func (a *API) Register(server *rest.Server) {
 		{Method: http.MethodGet, Path: "/api/v1/meta", Handler: a.meta},
 		{Method: http.MethodGet, Path: "/api/v1/facets", Handler: a.facets},
 		{Method: http.MethodGet, Path: "/api/v1/poems", Handler: a.listPoemsWithAuthPolicy},
-		{Method: http.MethodGet, Path: "/api/v1/poems/:id", Handler: a.getPoem},
-		{Method: http.MethodGet, Path: "/api/v1/poems/:id/audio", Handler: a.getPoemAudio},
+		{Method: http.MethodGet, Path: "/api/v1/poems/:id", Handler: a.requireAuth(a.getPoem)},
+		{Method: http.MethodGet, Path: "/api/v1/poems/:id/audio", Handler: a.requireAuth(a.getPoemAudio)},
 		{Method: http.MethodGet, Path: "/api/v1/featured", Handler: a.featured},
 	})
 }
 
 func (a *API) listPoemsWithAuthPolicy(w http.ResponseWriter, r *http.Request) {
+	if a.authRequired && listNeedsAuth(r) {
+		a.requireAuth(a.listPoems)(w, r)
+		return
+	}
 	a.listPoems(w, r)
+}
+
+func (a *API) requireAuth(next http.HandlerFunc) http.HandlerFunc {
+	if !a.authRequired {
+		return next
+	}
+	return a.auth.Require(next)
+}
+
+func listNeedsAuth(r *http.Request) bool {
+	for _, key := range []string{"q", "dynasty", "author", "title", "kind", "form", "theme", "cipai", "collection"} {
+		if strings.TrimSpace(r.URL.Query().Get(key)) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *API) getPoemAudio(w http.ResponseWriter, r *http.Request) {

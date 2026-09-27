@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/zeromicro/go-zero/core/conf"
@@ -34,6 +35,11 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	// Keep the anonymous-reading policy as the safe default when older
+	// deployment env files do not contain the new switch yet.
+	if strings.TrimSpace(os.Getenv("POETRY_REQUIRE_AUTH")) == "" {
+		_ = os.Setenv("POETRY_REQUIRE_AUTH", "false")
+	}
 	expanded := os.ExpandEnv(string(data))
 	var c config.Config
 	if err = conf.LoadFromYamlBytes([]byte(expanded), &c); err != nil {
@@ -51,7 +57,7 @@ func main() {
 	server := rest.MustNewServer(c.RestConf)
 	defer server.Stop()
 	auth := sso.New(sso.Config{Issuer: c.OIDC.Issuer, ClientID: c.OIDC.ClientID, ClientSecret: c.OIDC.ClientSecret, RedirectURL: c.OIDC.RedirectURL, SessionSecret: c.OIDC.SessionSecret, CookieName: c.OIDC.CookieName, AdminEmails: c.OIDC.AdminEmails})
-	httpapi.New(s, audio, c.App.DatasetVersion, auth).Register(server)
+	httpapi.New(s, audio, c.App.DatasetVersion, auth, c.App.RequireAuth).Register(server)
 	logx.Infof("kids poetry API listening on %s:%d", c.Host, c.Port)
 	server.Start()
 	fmt.Println("stopped")
