@@ -17,7 +17,9 @@
 
 `POETRY_REQUIRE_AUTH` 控制带筛选条件的目录查询、诗词详情和朗读音频是否要求
 SSO 登录。默认值为 `false`，访客可以直接阅读和收听，登录接口仍然保留；改为
-`true` 即可恢复原来的受保护阅读行为，不需要修改代码。
+`true` 即可恢复原来的受保护阅读行为，不需要修改代码。线上容器使用挂载的
+`/root/config/kids-poetry/backend.yaml`，修改其中 `App.RequireAuth` 后重启
+`kids-poetry-api` 即可切换策略。
 
 ## 数据边界
 
