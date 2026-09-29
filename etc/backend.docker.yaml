@@ -21,3 +21,7 @@ OIDC:
   SessionSecret: ${POETRY_OIDC_SESSION_SECRET}
   CookieName: poetry_session
   AdminEmails: ${POETRY_ADMIN_EMAILS}
+Stats:
+  InternalURL: ${POETRY_STATS_INTERNAL_URL}
+  Service: ${POETRY_STATS_SERVICE}
+  Secret: ${POETRY_STATS_SECRET}

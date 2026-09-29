@@ -36,6 +36,15 @@ type session struct {
 	Role          string `json:"role"`
 	ExpiresAt     int64  `json:"exp"`
 }
+type User struct {
+	Subject       string `json:"sub"`
+	Email         string `json:"email"`
+	Username      string `json:"username"`
+	DisplayName   string `json:"display_name"`
+	EmailVerified bool   `json:"email_verified"`
+	Role          string `json:"role"`
+	ExpiresAt     int64  `json:"exp"`
+}
 type stateKey struct{}
 
 func New(c Config) *Service {
@@ -187,12 +196,20 @@ func (s *Service) Callback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, safeReturnTo(p[2]), 302)
 }
 func (s *Service) Me(w http.ResponseWriter, r *http.Request) {
-	v, e := s.read(r)
-	if e != nil {
+	v, ok := s.CurrentUser(r)
+	if !ok {
 		writeJSON(w, 401, map[string]string{"error": "unauthorized"})
 		return
 	}
 	writeJSON(w, 200, v)
+}
+
+func (s *Service) CurrentUser(r *http.Request) (User, bool) {
+	v, e := s.read(r)
+	if e != nil {
+		return User{}, false
+	}
+	return User{Subject: v.Subject, Email: v.Email, Username: v.Username, DisplayName: v.DisplayName, EmailVerified: v.EmailVerified, Role: v.Role, ExpiresAt: v.ExpiresAt}, true
 }
 func (s *Service) Logout(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{Name: s.cfg.CookieName, Value: "", Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: -1})

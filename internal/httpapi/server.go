@@ -17,6 +17,7 @@ import (
 	"github.com/zeromicro/go-zero/rest/pathvar"
 	"github.com/zxxf18/kids-poetry-be/internal/audiostore"
 	"github.com/zxxf18/kids-poetry-be/internal/sso"
+	"github.com/zxxf18/kids-poetry-be/internal/statsclient"
 	"github.com/zxxf18/kids-poetry-be/internal/store"
 )
 
@@ -25,10 +26,13 @@ type API struct {
 	audio          *audiostore.Store
 	datasetVersion string
 	auth           *sso.Service
+	stats          *statsclient.Client
 	authRequired   bool
 	facetsMu       sync.RWMutex
 	facetsCache    map[string][]store.FacetValue
 }
+
+func (a *API) SetStatsClient(client *statsclient.Client) { a.stats = client }
 
 func New(s *store.MySQL, audio *audiostore.Store, datasetVersion string, auth *sso.Service, authRequired bool) *API {
 	a := &API{store: s, audio: audio, datasetVersion: datasetVersion, auth: auth, authRequired: authRequired}
@@ -46,7 +50,7 @@ func (a *API) Register(server *rest.Server) {
 	server.AddRoutes([]rest.Route{
 		{Method: http.MethodGet, Path: "/auth/login", Handler: a.auth.Login},
 		{Method: http.MethodGet, Path: "/auth/callback", Handler: a.auth.Callback},
-		{Method: http.MethodGet, Path: "/api/v1/auth/me", Handler: a.auth.Me},
+		{Method: http.MethodGet, Path: "/api/v1/auth/me", Handler: a.me},
 		{Method: http.MethodPost, Path: "/api/v1/auth/logout", Handler: a.auth.Logout},
 	})
 	server.AddRoutes([]rest.Route{
@@ -58,6 +62,18 @@ func (a *API) Register(server *rest.Server) {
 		{Method: http.MethodGet, Path: "/api/v1/poems/:id/audio", Handler: a.requireAuth(a.getPoemAudio)},
 		{Method: http.MethodGet, Path: "/api/v1/featured", Handler: a.featured},
 	})
+}
+
+func (a *API) me(w http.ResponseWriter, r *http.Request) {
+	user, ok := a.auth.CurrentUser(r)
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	if a.stats != nil {
+		a.stats.Enrich(r.Context(), r, user.Subject, user.DisplayName)
+	}
+	writeJSON(w, http.StatusOK, user)
 }
 
 func (a *API) listPoemsWithAuthPolicy(w http.ResponseWriter, r *http.Request) {

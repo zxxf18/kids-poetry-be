@@ -30,4 +30,9 @@ type Config struct {
 		CookieName    string
 		AdminEmails   string
 	}
+	Stats struct {
+		InternalURL string
+		Service     string
+		Secret      string
+	}
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/zxxf18/kids-poetry-be/internal/config"
 	"github.com/zxxf18/kids-poetry-be/internal/httpapi"
 	"github.com/zxxf18/kids-poetry-be/internal/sso"
+	"github.com/zxxf18/kids-poetry-be/internal/statsclient"
 	"github.com/zxxf18/kids-poetry-be/internal/store"
 )
 
@@ -57,7 +58,9 @@ func main() {
 	server := rest.MustNewServer(c.RestConf)
 	defer server.Stop()
 	auth := sso.New(sso.Config{Issuer: c.OIDC.Issuer, ClientID: c.OIDC.ClientID, ClientSecret: c.OIDC.ClientSecret, RedirectURL: c.OIDC.RedirectURL, SessionSecret: c.OIDC.SessionSecret, CookieName: c.OIDC.CookieName, AdminEmails: c.OIDC.AdminEmails})
-	httpapi.New(s, audio, c.App.DatasetVersion, auth, c.App.RequireAuth).Register(server)
+	api := httpapi.New(s, audio, c.App.DatasetVersion, auth, c.App.RequireAuth)
+	api.SetStatsClient(statsclient.New(c.Stats.InternalURL, c.Stats.Service, c.Stats.Secret))
+	api.Register(server)
 	logx.Infof("kids poetry API listening on %s:%d", c.Host, c.Port)
 	server.Start()
 	fmt.Println("stopped")
